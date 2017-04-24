@@ -4,16 +4,16 @@ from random import randint
 import random
 import tensorflow as tf
 
-save_foldername = 'R_Simulator'
+
 
 #TODO GENERALIZE THE NAMING AS INPUT
 class Tracker(): #Tracker
-    def __init__(self, parameters, foldername = save_foldername):
-        self.foldername = foldername
+    def __init__(self, parameters):
+        self.foldername = parameters.save_foldername
         self.fitnesses = []; self.avg_fitness = 0; self.tr_avg_fit = []
         self.hof_fitnesses = []; self.hof_avg_fitness = 0; self.hof_tr_avg_fit = []
-        if not os.path.exists(foldername):
-            os.makedirs(foldername)
+        if not os.path.exists(self.foldername):
+            os.makedirs(self.foldername)
         self.file_save = 'Simulator.csv'
 
     def add_fitness(self, fitness, generation):
@@ -54,7 +54,7 @@ class SSNE_param:
 
 class Parameters:
     def __init__(self):
-            self.population_size = 100
+            self.population_size = 50
 
             #SSNE stuff
             self.ssne_param = SSNE_param()
@@ -69,6 +69,8 @@ class Parameters:
             elif self.arch_type == 3: self.arch_type = 'TF_Feedforward'
             else: sys.exit('Invalid choice of neural architecture')
 
+            self.save_foldername = 'R_Simulator/'
+
 
 class Simulator:
     def __init__(self, parameters):
@@ -80,12 +82,36 @@ class Simulator:
         self.train_data, self.valid_data = self.data_preprocess()
 
 
-    def run_bprop(self, num_gens):
+    def init_population(self):
+        self.run_bprop(500)
+
+
+    def run_bprop(self, max_gens):
         train_x = self.train_data[0:-1]
         train_y = self.train_data[1:,0:-2]
 
-        #Run bprop in the individual 0 of the population
-        self.agent.pop[0].run_bprop(num_gens, train_x, train_y)
+        #Run Bprop for all of the population for a variable number of generations
+        for index, agent in enumerate(self.agent.pop):
+            if index != 0: num_gens = randint(10, max_gens) #Randomize number of gradient descent epochs after the first one to create diversity
+            else: num_gens = max_gens
+            agent.run_bprop(num_gens, train_x, train_y)
+            agent.save('Simulator_' + str(index))
+
+        #inp = np.reshape(self.train_data[0], (1,21))
+        #print self.agent.pop[0].predict(inp)
+        #self.agent.pop[0].load('Simulator_' + str(0))
+        #print self.agent.pop[0].predict(inp)
+
+        #mod.simulator_results(self.agent.pop[0])
+
+
+
+
+
+
+
+    #def save_population(self):
+
 
 
     def data_preprocess(self, filename='ColdAir.csv', downsample_rate=25, split = 1000):
@@ -105,9 +131,9 @@ class Simulator:
                     data[i][j] = ignore[(i * downsample_rate):i * downsample_rate + residue, j].sum() / residue
 
         # Normalize between 0-0.99
-        normalizer = np.zeros(data.shape[1], dtype=np.float64)
-        min = np.zeros(len(data[0]), dtype=np.float64)
-        max = np.zeros(len(data[0]), dtype=np.float64)
+        normalizer = np.zeros(data.shape[1])
+        min = np.zeros(len(data[0]))
+        max = np.zeros(len(data[0]))
         for i in range(len(data[0])):
             min[i] = np.amin(data[:, i])
             max[i] = np.amax(data[:, i])
@@ -164,9 +190,9 @@ if __name__ == "__main__":
     tracker = Tracker(parameters)  # Initiate tracker
     print 'Running Simulator Training ', parameters.arch_type
 
-
     simulator = Simulator(parameters)
-    simulator.run_bprop(10000)
+    simulator.init_population()
+
 
 
 

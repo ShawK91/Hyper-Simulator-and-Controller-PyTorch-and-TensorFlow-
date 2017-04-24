@@ -8,35 +8,55 @@ import tensorflow as tf
 
 
 class TF_ANN(): #FEEDFORWARD NET
-    def __init__(self, num_input, num_hidden, num_output, nn_type):
+    def __init__(self, num_input, num_hidden, num_output, nn_type, save_foldername):
         # Call the input and output
+        self.marker = 'TF_ANN'
+        self.save_foldername = save_foldername
+        if not os.path.exists(save_foldername):
+            os.makedirs(save_foldername)
+
+        #Placeholder for input and target
         self.input = tf.placeholder("float", [None, num_input])
         self.target = tf.placeholder("float", [None, num_output])
 
+
         if nn_type == 'TF_Feedforward':
             # Call trainable variables (neural weights)
-            self.w_h1 = tf.Variable(tf.random_uniform([num_input, num_hidden], -.01, .01))
-            self.w_b1 = tf.Variable(tf.random_uniform([num_hidden], -.01, .01))
-            self.w_h2 = tf.Variable(tf.random_uniform([num_hidden, num_output], -.01, .01))
-            self.w_b2 = tf.Variable(tf.random_uniform([num_output], -.01, .01))
+            self.w_h1 = tf.Variable(tf.random_uniform([num_input, num_hidden], -1, 1))
+            self.w_b1 = tf.Variable(tf.random_uniform([num_hidden], -1, 1))
+            self.w_h2 = tf.Variable(tf.random_uniform([num_hidden, num_output], -1, 1))
+            self.w_b2 = tf.Variable(tf.random_uniform([num_output], -1, 1))
 
             # Feedforward operation
-            self.h_1 = tf.nn.relu(tf.matmul(self.input, self.w_h1) + self.w_b1)
+            self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
             self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
-            self.net_out = tf.nn.sigmoid(self.net_out)
+            #self.net_out = tf.nn.sigmoid(self.net_out)
+
+            # Define loss function and backpropagation (optimizer)
+            self.cost = tf.losses.absolute_difference(self.target, self.net_out)
+            self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
+            #self.bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
+
+            self.sess = tf.Session()
+            self.saver = tf.train.Saver()
+            self.sess.run(tf.global_variables_initializer())
 
     def run_bprop(self, num_gen, train_x, train_y, cost_choice = 'mse', optimizer = 'Adam'):
-            # Define loss function and backpropagation (optimizer)
-            cost = tf.losses.mean_squared_error(self.target, self.net_out)
-            bprop = tf.train.AdamOptimizer(0.05).minimize(cost)
-
-            sess = tf.Session()
-            sess.run(tf.global_variables_initializer())
 
             for gen in range(num_gen):
-                sess.run(bprop, feed_dict={self.input: train_x, self.target: train_y})
-                print sess.run(cost, feed_dict={self.input: train_x, self.target: train_y})
-                #print gen + 1, cost
+                self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
+                print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
+                #print self.sess.run(self.target, feed_dict={self.input: train_x, self.target: train_y}).shape
+                #print self.sess.run(self.net_out, feed_dict={self.input: train_x, self.target: train_y}).shape
+
+    def predict(self, input): #Run the network
+        return self.sess.run(self.net_out, feed_dict={self.input: input})
+
+    def save(self, filename = 'tf_ann.ckpt'):
+        self.saver.save(self.sess, self.save_foldername + filename)
+
+    def load(self, filename = './tf_ann.ckpt'):
+        self.saver.restore(self.sess, self.save_foldername + filename)
 
 class TF_SSNE:
     def __init__(self, parameters):
@@ -50,7 +70,7 @@ class TF_SSNE:
         # Create population
         self.pop = []
         for i in range(self.population_size):
-            self.pop.append(TF_ANN(self.ssne_param.num_input, self.ssne_param.num_hnodes, self.ssne_param.num_output, self.arch_type))
+            self.pop.append(TF_ANN(self.ssne_param.num_input, self.ssne_param.num_hnodes, self.ssne_param.num_output, self.arch_type, parameters.save_foldername))
 
 
     def selection_tournament(self, index_rank, num_offsprings, tournament_size):
@@ -638,18 +658,9 @@ class TF_SSNE:
         pickle_object(self.pop, filename)
 
 
-
-
-
-
-
-
-
-
-
-
 class normal_net:
     def __init__(self, num_input, num_hnodes, num_output, mean = 0, std = 1):
+        self.marker == 'NP'
         self.num_substructures = 4
         self.num_input = num_input; self.num_output = num_output; self.num_hnodes = num_hnodes; self.net_output = [] * num_output
         #W_01 matrix contains the weigh going from input (0) to the 1st hidden layer(1)
@@ -712,6 +723,9 @@ class normal_net:
         z2 = self.w_12 * h1 #Forward pass linear
         self.net_output = (self.fast_sigmoid((z2))) #Use sigmoid transform
         return np.array(self.net_output).tolist()
+
+    def predict(self, input): #Keyword match with TF
+        return self.feedforward(input)
 
     def get_weights(self):
         w1 = np.array(self.w_01).flatten().copy()
@@ -800,6 +814,9 @@ class Quasi_NTM:
             ans =  1 / (1 + math.exp(-p))
 
         return ans
+
+    def predict(self, input): #Keyword match with TF
+        return self.feedforward(input)
 
     def fast_sigmoid(self, layer_input): #Sigmoid transform
         layer_input = expit(layer_input)
@@ -1004,6 +1021,9 @@ class Quasi_GRU:
             ans =  1 / (1 + math.exp(-p))
 
         return ans
+
+    def predict(self, input): #Keyword match with TF
+        return self.feedforward(input)
 
     def fast_sigmoid(self, layer_input): #Sigmoid transform
         layer_input = expit(layer_input)
@@ -3026,9 +3046,6 @@ def import_arch(seed = 'Evolutionary/seed.json'): #Get model architecture
     return model_arch
 
 
-
-
-
 def simulator_results(model, filename = 'ColdAir.csv', downsample_rate=25):
     from matplotlib import pyplot as plt
     plt.switch_backend('Qt4Agg')
@@ -3049,43 +3066,44 @@ def simulator_results(model, filename = 'ColdAir.csv', downsample_rate=25):
                 data[i][j] = ignore[(i * downsample_rate):i * downsample_rate + residue, j].sum() / residue
 
     # Normalize between 0-0.99
-    normalizer = np.zeros(data.shape[1], dtype=np.float64)
-    min = np.zeros(len(data[0]), dtype=np.float64)
-    max = np.zeros(len(data[0]), dtype=np.float64)
+    normalizer = np.zeros(data.shape[1])
+    min = np.zeros(len(data[0]))
+    max = np.zeros(len(data[0]))
     for i in range(len(data[0])):
         min[i] = np.amin(data[:, i])
         max[i] = np.amax(data[:, i])
         normalizer[i] = max[i] - min[i] + 0.00001
         data[:, i] = (data[:, i] - min[i]) / normalizer[i]
-    ##EO FILE IO##
 
     print ('TESTING NOW')
-    input = np.reshape(data[0], (21))  # First input to the simulatior
+    input = np.reshape(data[0], (1, 21))  # First input to the simulatior
     track_target = np.reshape(np.zeros((len(data) - 1) * 19), (19, len(data) - 1))
     track_output = np.reshape(np.zeros((len(data) - 1) * 19), (19, len(data) - 1))
 
     for example in range(len(data)-1):  # For all training examples
-        model_out = model.feedforward(input)
+        model_out = model.predict(input)
 
         # Track index
         for index in range(19):
-            track_output[index][example] = model_out[index][0] * normalizer[index] + min[index]
-            track_target[index][example] = data[example][index] * normalizer[index] + min[index]
+            track_output[index][example] = model_out[0][index] * normalizer[index] + min[index]
+            track_target[index][example] = data[example+1][index] * normalizer[index] + min[index]
 
         # Fill in new input data
         for k in range(len(model_out)):
-            input[k] = model_out[k][0]
+            input[k] = model_out[0][k]
         # Fill in two control variables
-        input[19] = data[example + 1][19]
-        input[20] = data[example + 1][20]
+        input[0][19] = data[example + 1][19]
+        input[0][20] = data[example + 1][20]
 
 
     for index in range(19):
-        #plt.plot(ignore[index], 'r--',label='Target Index: ' + str(index))
         plt.plot(track_target[index], 'r--',label='Actual Data: ' + str(index))
-        plt.plot(track_output[index], 'b-',label='GRU-MB Simulator: ' + str(index))
+        plt.plot(track_output[index], 'b-',label='TF_Simulator: ' + str(index))
+        #np.savetxt('R_Simulator/output_' + str(index) + '.csv', track_output[index])
+        #np.savetxt('R_Simulator/target_' + str(index) + '.csv', track_target[index])
         plt.legend( loc='upper right',prop={'size':6})
         #plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
+        #print track_output[index]
         plt.show()
 
 def pickle_object(obj, filename):
