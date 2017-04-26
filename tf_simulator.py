@@ -1,15 +1,16 @@
 import numpy as np, os
 import mod_hyper as mod, sys, math
 from random import randint
-import random
+from scipy.special import expit
 import tensorflow as tf
+from copy import deepcopy
 
 
 
 #TODO GENERALIZE THE NAMING AS INPUT
 class Tracker(): #Tracker
     def __init__(self, parameters):
-        self.foldername = parameters.save_foldername
+        self.foldername = parameters.save_foldername + '/0000_CSV'
         self.fitnesses = []; self.avg_fitness = 0; self.tr_avg_fit = []
         self.hof_fitnesses = []; self.hof_avg_fitness = 0; self.hof_tr_avg_fit = []
         if not os.path.exists(self.foldername):
@@ -55,15 +56,14 @@ class SSNE_param:
 class Parameters:
     def __init__(self):
             self.population_size = 100
-            self.load_seed_population = True #Loads a seed population from the save_foldername
+            self.load_seed = True #Loads a seed population from the save_foldername
                                               # IF FALSE: Runs Backpropagation, saves it and uses that
-
             #BackProp
             self.bprop_max_gens = 1000
 
             #SSNE stuff
             self.ssne_param = SSNE_param()
-            self.total_gens = 25000
+            self.total_gens = 100000
             #Determine the nerual archiecture
             self.arch_type = 3 #1 GRU
                                #2 GRU-MB
@@ -77,11 +77,19 @@ class Parameters:
             self.save_foldername = 'R_Simulator/'
 
 
-class TF_Simulator(): #TF Simulator individual (One complete simulator genome)
+
+
+class Fast_Simulator(): #TF Simulator individual (One complete simulator genome)
     def __init__(self):
-        self.sess = tf.Session()
-        self.saver = tf.train.Saver()
-        self.sess.run(tf.global_variables_initializer())
+        self.W = None
+
+    def predict(self, input):
+        # Feedforward operation
+        h_1 = expit(np.dot(input, self.W[0]) + self.W[1])
+        return np.dot(h_1, self.W[2]) + self.W[3]
+
+    def from_tf(self, tf_sess):
+        self.W = tf_sess.run(tf.trainable_variables())
 
 
 class Task_Simulator: #Simulator Task
@@ -90,7 +98,7 @@ class Task_Simulator: #Simulator Task
         self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
 
         self.train_data, self.valid_data = self.data_preprocess() #Get simulator data
-        self.ssne = mod.TF_SSNE(parameters) #nitialize SSNE engine
+        self.ssne = mod.FAST_SSNE(parameters) #nitialize SSNE engine
 
         # Simulator save folder for checkpoints
         self.marker = 'TF_ANN'
@@ -119,47 +127,46 @@ class Task_Simulator: #Simulator Task
         self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
         #bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
 
+        #Open session
+        self.sess = tf.Session()
+        self.saver = tf.train.Saver()
+        self.sess.run(tf.global_variables_initializer())
 
         #####CREATE POPULATION
         self.pop = []
         for i in range(self.parameters.population_size):
-            self.pop.append(TF_Simulator())
+            self.pop.append(Fast_Simulator())
 
-
-    def save(self, individual, filename = 'tf_ann.ckpt'):
-        return individual.saver.save(individual.sess, self.save_foldername + filename)
-
-    def load(self, individual, filename = './tf_ann.ckpt'):
-        return individual.saver.restore(individual.sess, self.save_foldername + filename)
-
-    def predict(self, individual, input): #Runs the individual net and computes and output by feedforwarding
-        return individual.sess.run(self.net_out, feed_dict={self.input: input} )
-
-
-
-    def init_population(self):
-        if self.parameters.load_seed_population: #Load seed population
-            for index, individual in enumerate(self.pop):
-                self.load(individual, 'Simulator_' + str(index))
+        ###Init population
+        if self.parameters.load_seed: #Load seed population
+            self.saver.restore(self.sess, self.save_foldername + 'bprop_simulator')
         else: #Run Backprop
             self.run_bprop()
 
+        self.pop[0].from_tf(self.sess) #Convert TF model into Fast_NET for population instance 1
+        #Init population by randomly perturbing the first one
+        for individual in self.pop[1:]:
+            individual.W = deepcopy(self.pop[0].W) #Copy pop 0 genome
+            for w in individual.W:
+                mut = np.reshape(np.random.normal(0, 2, w.size), (w.shape[0], w.shape[-1]))
+                w += mut
+
+    def save(self, individual, filename ):
+        mod.pickle_object(individual, filename)
+        #return individual.saver.save(individual.sess, self.save_foldername + filename)
+
+    def load(self, individual, filename ):
+        return individual.saver.restore(individual.sess, self.save_foldername + filename)
+
+    def predict(self, individual, input): #Runs the individual net and computes and output by feedforwarding
+        return individual.predict(input)
 
     def run_bprop(self):
         train_x = self.train_data[0:-1]
         train_y = self.train_data[1:,0:-2]
-
-        for index, individual in enumerate(self.pop):
-            print index,
-            if index != 0: num_gens = randint(1, self.parameters.bprop_max_gens) #Randomize number of gradient descent epochs after the first one to create diversity
-            else: num_gens = self.parameters.bprop_max_gens
-            for gen in range(num_gens):
-                individual.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
-                print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
-
-            #Save individual
-            print self.save(individual, 'Simulator_' + str(index))
-
+        for gen in range(self.parameters.bprop_max_gens):
+            self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
+        self.saver.save(self.sess, self.save_foldername + 'bprop_simulator') #Save individual
 
     def compute_fitness(self, individual, data):
         fitness = np.zeros(19)
@@ -195,10 +202,10 @@ class Task_Simulator: #Simulator Task
         valid_score = self.compute_fitness(self.pop[champion_index], self.valid_data)
 
         #Save population and HOF
-        if gen % 1000 == 0:
+        if gen % 1 == 0:
             for index, individual in enumerate(self.pop): #Save population
-                self.save(individual, 'Simulator_' + str(index))
-            self.save(self.pop[champion_index], 'Champion_Simulator') #Save champion
+                self.save(individual, self.save_foldername + 'Simulator_' + str(index))
+            self.save(self.pop[champion_index], self.save_foldername + 'Champion_Simulator') #Save champion
             np.savetxt(self.save_foldername + '/gen_tag', np.array([gen + 1]), fmt='%.3f', delimiter=',')
 
         #SSNE Epoch: Selection and Mutation/Crossover step
@@ -251,7 +258,6 @@ if __name__ == "__main__":
     print 'Running Simulator Training ', parameters.arch_type
 
     sim_task = Task_Simulator(parameters)
-    sim_task.init_population()
     for gen in range(1, parameters.total_gens):
         gen_best_fitness, valid_score = sim_task.evolve(gen)
         print 'Generation:', gen, ' Epoch_reward:', "%0.2f" % gen_best_fitness, ' Valid Score:', "%0.2f" % valid_score, '  Cumul_Valid_Score:', "%0.2f" % tracker.hof_avg_fitness

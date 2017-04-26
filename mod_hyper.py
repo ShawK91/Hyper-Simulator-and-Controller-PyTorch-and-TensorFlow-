@@ -1,5 +1,6 @@
 from random import randint
-import math, copy
+import math
+from copy import deepcopy
 import numpy as np, time
 import random
 from scipy.special import expit
@@ -40,7 +41,144 @@ class TF_Simulator(): #TF Simulator individual
 
 
 
+class FAST_SSNE:
+    def __init__(self, parameters):
+        self.current_gen = 0
+        self.parameters = parameters; self.ssne_param = self.parameters.ssne_param; self.arch_type = self.parameters.arch_type
+        self.population_size = self.parameters.population_size;
+        self.num_elitists = int(self.ssne_param.elite_fraction * parameters.population_size)
+        if self.num_elitists < 1: self.num_elitists = 1
+        self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
 
+
+    def selection_tournament(self, index_rank, num_offsprings, tournament_size):
+        total_choices = len(index_rank)
+        offsprings = []
+        for i in range(num_offsprings):
+            winner = np.min(np.random.randint(total_choices, size=tournament_size))
+            offsprings.append(index_rank[winner])
+
+        offsprings = list(set(offsprings))  # Find unique offsprings
+        if len(offsprings) % 2 != 0:  # Number of offsprings should be even
+            offsprings.append(offsprings[randint(0, len(offsprings) - 1)])
+        return offsprings
+
+    def list_argsort(self, seq):
+        return sorted(range(len(seq)), key=seq.__getitem__)
+
+    def crossover_inplace(self, gene1, gene2):
+
+        #New weights initialize as copy of previous weights
+        new_W1 = gene1.W
+        new_W2 = gene2.W
+
+
+        #Crossover opertation (NOTE THE INDICES CROSSOVER BY COLUMN NOT ROWS)
+        num_cross_overs = randint(1, len(new_W1) * 2) #Lower bounded on full swaps
+        for i in range(num_cross_overs):
+            tensor_choice = randint(0, len(new_W1)-1) #Choose which tensor to perturb
+            receiver_choice = random.random() #Choose which gene to receive the perturbation
+            if receiver_choice < 0.5:
+                ind_cr = randint(0, new_W1[tensor_choice].shape[-1]-1)  #
+                new_W1[tensor_choice][:, ind_cr] = new_W2[tensor_choice][:, ind_cr]
+            else:
+                ind_cr = randint(0, new_W2[tensor_choice].shape[-1]-1)  #
+                new_W2[tensor_choice][:, ind_cr] = new_W1[tensor_choice][:, ind_cr]
+
+
+
+
+    def regularize_weight(self, weight):
+        if weight > self.ssne_param.weight_magnitude_limit:
+            weight = self.ssne_param.weight_magnitude_limit
+        if weight < -self.ssne_param.weight_magnitude_limit:
+            weight = -self.ssne_param.weight_magnitude_limit
+        return weight
+
+    def mutate_inplace(self, gene):
+        mut_strength = 0.2
+        num_mutation_frac = 0.2
+        super_mut_strength = 10
+        super_mut_prob = 0.05
+
+
+
+        # New weights initialize as copy of previous weights
+        new_W = gene.W
+        num_variables = len(new_W)
+
+
+        num_tensor_mutation = randint(0, num_variables-1) #Number of mutation operation level of tensors
+        for _ in range(num_tensor_mutation):
+            tensor_choice = randint(0, num_variables-1)#Choose which tensor to perturb
+            num_mutations = randint(1, math.ceil(num_mutation_frac * new_W[tensor_choice].size)) #Number of mutation instances
+            for _ in range(num_mutations):
+                ind_dim1 = randint(0, randint(0, new_W[tensor_choice].shape[0]-1))
+                ind_dim2 = randint(0, randint(0, new_W[tensor_choice].shape[-1]-1))
+                if random.random() < super_mut_prob:
+                    new_W[tensor_choice][ind_dim1][ind_dim2] += random.gauss(0, super_mut_strength * new_W[tensor_choice][ind_dim1][ind_dim2])
+                else:
+                    new_W[tensor_choice][ind_dim1][ind_dim2] += random.gauss(0, mut_strength * new_W[tensor_choice][ind_dim1][ind_dim2])
+
+                # Regularization hard limit
+                    new_W[tensor_choice][ind_dim1][ind_dim2] = self.regularize_weight(new_W[tensor_choice][ind_dim1][ind_dim2])
+
+    def copy_individual(self, master, replacee): #Replace the replacee individual with master
+       replacee.W = deepcopy(master.W)
+
+
+
+    def epoch(self, pop, fitness_evals):
+
+        # Entire epoch is handled with indices; Index rank nets by fitness evaluation (0 is the best after reversing)
+        index_rank = self.list_argsort(fitness_evals); index_rank.reverse()
+        elitist_index = index_rank[:self.num_elitists]  # Elitist indexes safeguard
+
+        # Selection step
+        offsprings = self.selection_tournament(index_rank, num_offsprings=len(index_rank) - self.num_elitists,
+                                               tournament_size=3)
+        # Figure out unselected candidates
+        unselects = [];
+        new_elitists = []
+        for i in range(self.population_size):
+            if i in offsprings or i in elitist_index:
+                continue
+            else:
+                unselects.append(i)
+        random.shuffle(unselects)
+
+        # Elitism step, assigning elite candidates to some unselects
+        for i in elitist_index:
+            replacee = unselects.pop(0)
+            new_elitists.append(replacee)
+            self.copy_individual(master=pop[i], replacee=pop[replacee])
+            #pop[replacee] = copy.deepcopy(pop[i])
+
+        # Crossover for unselected genes with 100 percent probability
+        if len(unselects) % 2 != 0:  # Number of unselects left should be even
+            unselects.append(unselects[randint(0, len(unselects) - 1)])
+        for i, j in zip(unselects[0::2], unselects[1::2]):
+            off_i = random.choice(new_elitists);
+            off_j = random.choice(offsprings)
+            #pop[i] = copy.deepcopy(pop[off_i])
+            #pop[j] = copy.deepcopy(pop[off_j])
+            self.copy_individual(master=pop[off_i], replacee=pop[i])
+            self.copy_individual(master=pop[off_j], replacee=pop[j])
+            self.crossover_inplace(pop[i], pop[j])
+
+        # Crossover for selected offsprings
+        for i, j in zip(offsprings[0::2], offsprings[1::2]):
+            if random.random() < self.ssne_param.crossover_prob: self.crossover_inplace(pop[i], pop[j])
+
+        # Mutate all genes in the population except the new elitists
+        for i in range(self.population_size):
+            if i not in new_elitists:  # Spare the new elitists
+                if random.random() < self.ssne_param.mutation_prob:
+                    self.mutate_inplace(pop[i])
+
+    def save_pop(self, filename='Pop'):
+        filename = str(self.current_gen) + '_' + filename
+        pickle_object(self.pop, filename)
 
 
 
