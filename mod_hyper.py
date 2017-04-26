@@ -7,56 +7,42 @@ import sys,os, cPickle
 import tensorflow as tf
 
 
-class TF_ANN(): #FEEDFORWARD NET
-    def __init__(self, num_input, num_hidden, num_output, nn_type, save_foldername):
-        # Call the input and output
-        self.marker = 'TF_ANN'
-        self.save_foldername = save_foldername
-        if not os.path.exists(save_foldername):
-            os.makedirs(save_foldername)
-
+class TF_simulator_nodes():
+    def __init__(self, num_input, num_hidden, num_output):
         #Placeholder for input and target
         self.input = tf.placeholder("float", [None, num_input])
         self.target = tf.placeholder("float", [None, num_output])
 
+        # Call trainable variables (neural weights)
+        self.w_h1 = tf.Variable(tf.random_uniform([num_input, num_hidden], -1, 1))
+        self.w_b1 = tf.Variable(tf.random_uniform([num_hidden], -1, 1))
+        self.w_h2 = tf.Variable(tf.random_uniform([num_hidden, num_output], -1, 1))
+        self.w_b2 = tf.Variable(tf.random_uniform([num_output], -1, 1))
 
-        if nn_type == 'TF_Feedforward':
-            # Call trainable variables (neural weights)
-            self.w_h1 = tf.Variable(tf.random_uniform([num_input, num_hidden], -1, 1))
-            self.w_b1 = tf.Variable(tf.random_uniform([num_hidden], -1, 1))
-            self.w_h2 = tf.Variable(tf.random_uniform([num_hidden, num_output], -1, 1))
-            self.w_b2 = tf.Variable(tf.random_uniform([num_output], -1, 1))
+        # Feedforward operation
+        self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
+        self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
+        # self.net_out = tf.nn.sigmoid(self.net_out)
 
-            # Feedforward operation
-            self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
-            self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
-            #self.net_out = tf.nn.sigmoid(self.net_out)
+        # Define loss function and backpropagation (optimizer)
+        self.cost = tf.losses.absolute_difference(self.target, self.net_out)
+        self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
+        #bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
 
-            # Define loss function and backpropagation (optimizer)
-            self.cost = tf.losses.absolute_difference(self.target, self.net_out)
-            self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
-            #self.bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
 
-            self.sess = tf.Session()
-            self.saver = tf.train.Saver()
-            self.sess.run(tf.global_variables_initializer())
 
-    def run_bprop(self, num_gen, train_x, train_y, cost_choice = 'mse', optimizer = 'Adam'):
+class TF_Simulator(): #TF Simulator individual
+    def __init__(self):
 
-            for gen in range(num_gen):
-                self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
-                print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
-                #print self.sess.run(self.target, feed_dict={self.input: train_x, self.target: train_y}).shape
-                #print self.sess.run(self.net_out, feed_dict={self.input: train_x, self.target: train_y}).shape
+        self.sess = tf.Session()
+        self.sess.run(tf.global_variables_initializer())
+        self.saver = tf.train.Saver()
 
-    def predict(self, input): #Run the network
-        return self.sess.run(self.net_out, feed_dict={self.input: input})
 
-    def save(self, filename = 'tf_ann.ckpt'):
-        self.saver.save(self.sess, self.save_foldername + filename)
 
-    def load(self, filename = './tf_ann.ckpt'):
-        self.saver.restore(self.sess, self.save_foldername + filename)
+
+
+
 
 class TF_SSNE:
     def __init__(self, parameters):
@@ -65,12 +51,230 @@ class TF_SSNE:
         self.population_size = self.parameters.population_size;
         self.num_elitists = int(self.ssne_param.elite_fraction * parameters.population_size)
         if self.num_elitists < 1: self.num_elitists = 1
+        self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
+
+
+    def selection_tournament(self, index_rank, num_offsprings, tournament_size):
+        total_choices = len(index_rank)
+        offsprings = []
+        for i in range(num_offsprings):
+            winner = np.min(np.random.randint(total_choices, size=tournament_size))
+            offsprings.append(index_rank[winner])
+
+        offsprings = list(set(offsprings))  # Find unique offsprings
+        if len(offsprings) % 2 != 0:  # Number of offsprings should be even
+            offsprings.append(offsprings[randint(0, len(offsprings) - 1)])
+        return offsprings
+
+    def list_argsort(self, seq):
+        return sorted(range(len(seq)), key=seq.__getitem__)
+
+    def crossover_inplace(self, gene1, gene2):
+        #References to the variable tensors
+        variable_tensors= tf.trainable_variables()
+        num_variables = len(variable_tensors)
+
+        #New weights initialize as copy of previous weights
+        new_W1 = gene1.sess.run(tf.trainable_variables())
+        new_W2 = gene2.sess.run(tf.trainable_variables())
+
+
+        #Crossover opertation (NOTE THE INDICES CROSSOVER BY COLUMN NOT ROWS)
+        num_cross_overs = randint(1, num_variables * 2) #Lower bounded on full swaps
+        for i in range(num_cross_overs):
+            tensor_choice = randint(0, num_variables-1) #Choose which tensor to perturb
+            receiver_choice = random.random() #Choose which gene to receive the perturbation
+            if receiver_choice < 0.5:
+                ind_cr = randint(0, new_W1[tensor_choice].shape[-1]-1)  #
+                new_W1[tensor_choice][:, ind_cr] = new_W2[tensor_choice][:, ind_cr]
+            else:
+                ind_cr = randint(0, new_W2[tensor_choice].shape[-1]-1)  #
+                new_W2[tensor_choice][:, ind_cr] = new_W1[tensor_choice][:, ind_cr]
+
+        #Assign the new weights to individuals
+        for i in range(num_variables):
+            #Create operations for assigning new weights
+            op_1 = variable_tensors[i].assign(new_W1[i])
+            op_2 = variable_tensors[i].assign(new_W2[i])
+
+            #Run them in session
+            gene1.sess.run(op_1)
+            gene2.sess.run(op_2)
+
+    def regularize_weight(self, weight):
+        if weight > self.ssne_param.weight_magnitude_limit:
+            weight = self.ssne_param.weight_magnitude_limit
+        if weight < -self.ssne_param.weight_magnitude_limit:
+            weight = -self.ssne_param.weight_magnitude_limit
+        return weight
+
+    def mutate_inplace(self, gene):
+        mut_strength = 0.2
+        num_mutation_frac = 0.2
+        super_mut_strength = 10
+        super_mut_prob = 0.05
+
+        # References to the variable tensors
+        variable_tensors = tf.trainable_variables()
+        num_variables = len(variable_tensors)
+
+        # New weights initialize as copy of previous weights
+        new_W = gene.sess.run(tf.trainable_variables())
+
+
+        num_tensor_mutation = randint(0, num_variables-1) #Number of mutation operation level of tensors
+        for _ in range(num_tensor_mutation):
+            tensor_choice = randint(0, num_variables-1)#Choose which tensor to perturb
+            num_mutations = randint(1, math.ceil(num_mutation_frac * new_W[tensor_choice].size)) #Number of mutation instances
+            for _ in range(num_mutations):
+                ind_dim1 = randint(0, randint(0, new_W[tensor_choice].shape[0]-1))
+                ind_dim2 = randint(0, randint(0, new_W[tensor_choice].shape[-1]-1))
+                if random.random() < super_mut_prob:
+                    new_W[tensor_choice][ind_dim1][ind_dim2] += random.gauss(0, super_mut_strength * new_W[tensor_choice][ind_dim1][ind_dim2])
+                else:
+                    new_W[tensor_choice][ind_dim1][ind_dim2] += random.gauss(0, mut_strength * new_W[tensor_choice][ind_dim1][ind_dim2])
+
+                # Regularization hard limit
+                    new_W[tensor_choice][ind_dim1][ind_dim2] = self.regularize_weight(new_W[tensor_choice][ind_dim1][ind_dim2])
+
+        # Assign the new weights to individuals
+        for i in range(num_variables):
+            # Create operations for assigning new weights
+            op_1 = variable_tensors[i].assign(new_W[i])
+
+            # Run them in session
+            gene.sess.run(op_1)
+
+    def copy_individual(self, master, replacee): #Replace the replacee individual with master
+        #References to the variable tensors
+        variable_tensors= tf.trainable_variables()
+        num_variables = len(variable_tensors)
+
+        #New weights initialize as copy of previous weights
+        master_W = master.sess.run(tf.trainable_variables())
+
+        #Assign the new weights to individuals
+        for i in range(num_variables):
+            #Create operations for assigning new weights
+            op = variable_tensors[i].assign(master_W[i])
+
+            #Run them in session
+            replacee.sess.run(op)
+
+
+
+    def epoch(self, pop, fitness_evals):
+
+        # Entire epoch is handled with indices; Index rank nets by fitness evaluation (0 is the best after reversing)
+        index_rank = self.list_argsort(fitness_evals); index_rank.reverse()
+        elitist_index = index_rank[:self.num_elitists]  # Elitist indexes safeguard
+
+        # Selection step
+        offsprings = self.selection_tournament(index_rank, num_offsprings=len(index_rank) - self.num_elitists,
+                                               tournament_size=3)
+        # Figure out unselected candidates
+        unselects = [];
+        new_elitists = []
+        for i in range(self.population_size):
+            if i in offsprings or i in elitist_index:
+                continue
+            else:
+                unselects.append(i)
+        random.shuffle(unselects)
+
+        # Elitism step, assigning elite candidates to some unselects
+        for i in elitist_index:
+            replacee = unselects.pop(0)
+            new_elitists.append(replacee)
+            self.copy_individual(master=pop[i], replacee=pop[replacee])
+            #pop[replacee] = copy.deepcopy(pop[i])
+
+        # Crossover for unselected genes with 100 percent probability
+        if len(unselects) % 2 != 0:  # Number of unselects left should be even
+            unselects.append(unselects[randint(0, len(unselects) - 1)])
+        for i, j in zip(unselects[0::2], unselects[1::2]):
+            off_i = random.choice(new_elitists);
+            off_j = random.choice(offsprings)
+            #pop[i] = copy.deepcopy(pop[off_i])
+            #pop[j] = copy.deepcopy(pop[off_j])
+            self.copy_individual(master=pop[off_i], replacee=pop[i])
+            self.copy_individual(master=pop[off_j], replacee=pop[j])
+            self.crossover_inplace(pop[i], pop[j])
+
+        # Crossover for selected offsprings
+        for i, j in zip(offsprings[0::2], offsprings[1::2]):
+            if random.random() < self.ssne_param.crossover_prob: self.crossover_inplace(pop[i], pop[j])
+
+        # Mutate all genes in the population except the new elitists
+        for i in range(self.population_size):
+            if i not in new_elitists:  # Spare the new elitists
+                if random.random() < self.ssne_param.mutation_prob:
+                    self.mutate_inplace(pop[i])
+
+    def save_pop(self, filename='Pop'):
+        filename = str(self.current_gen) + '_' + filename
+        pickle_object(self.pop, filename)
+
+
+
+
+class TF_SSNE_BCK:
+    def __init__(self, parameters):
+        self.current_gen = 0
+        self.parameters = parameters; self.ssne_param = self.parameters.ssne_param; self.arch_type = self.parameters.arch_type
+        self.population_size = self.parameters.population_size;
+        self.num_elitists = int(self.ssne_param.elite_fraction * parameters.population_size)
+        if self.num_elitists < 1: self.num_elitists = 1
         self.fitness_evals = [[] for x in xrange(parameters.population_size)]  # Fitness eval list
+
+        # Simulator save
+        self.marker = 'TF_ANN'
+        self.save_foldername = self.parameters.save_foldername
+        if not os.path.exists(self.save_foldername):
+            os.makedirs(self.save_foldername)
+
+
+        num_input = self.ssne_param.num_input
+        num_hidden = self.ssne_param.num_hnodes
+        num_output = self.ssne_param.num_output
+        # Placeholder for input and target
+        self.input = tf.placeholder("float", [None, num_input])
+        self.target = tf.placeholder("float", [None, num_output])
+
+        # Call trainable variables (neural weights)
+        self.w_h1 = tf.Variable(tf.random_uniform([num_input, num_hidden], -1, 1))
+        self.w_b1 = tf.Variable(tf.random_uniform([num_hidden], -1, 1))
+        self.w_h2 = tf.Variable(tf.random_uniform([num_hidden, num_output], -1, 1))
+        self.w_b2 = tf.Variable(tf.random_uniform([num_output], -1, 1))
+
+        # Feedforward operation
+        self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
+        self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
+        # self.net_out = tf.nn.sigmoid(self.net_out)
+
+        # Define loss function and backpropagation (optimizer)
+        self.cost = tf.losses.absolute_difference(self.target, self.net_out)
+        self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
+        self.saver = tf.train.Saver()
 
         # Create population
         self.pop = []
         for i in range(self.population_size):
-            self.pop.append(TF_ANN(self.ssne_param.num_input, self.ssne_param.num_hnodes, self.ssne_param.num_output, self.arch_type, parameters.save_foldername))
+            self.pop.append(tf.Session())
+            self.pop[i].run(tf.global_variables_initializer())
+
+    def run_bprop_test(self, num_gen, train_x, train_y, agent):
+        for gen in range(num_gen):
+            agent.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
+            #print agent.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
+
+
+
+    def save(self, individual, filename = 'tf_ann.ckpt'):
+        return self.saver.save(individual, self.save_foldername + filename)
+
+    def load(self, filename = './tf_ann.ckpt'):
+        self.saver.restore(self.sess, self.save_foldername + filename)
 
 
     def selection_tournament(self, index_rank, num_offsprings, tournament_size):

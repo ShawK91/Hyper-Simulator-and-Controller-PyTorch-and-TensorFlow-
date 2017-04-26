@@ -49,12 +49,17 @@ class SSNE_param:
         self.elite_fraction = 0.1
         self.crossover_prob = 0.1
         self.mutation_prob = 0.9
-        self.weight_magnitude_limit = 1000000000000
-        self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
+        self.weight_magnitude_limit = 10000000
+        #self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
 
 class Parameters:
     def __init__(self):
-            self.population_size = 50
+            self.population_size = 100
+            self.load_seed_population = True #Loads a seed population from the save_foldername
+                                              # IF FALSE: Runs Backpropagation, saves it and uses that
+
+            #BackProp
+            self.bprop_max_gens = 1000
 
             #SSNE stuff
             self.ssne_param = SSNE_param()
@@ -72,47 +77,134 @@ class Parameters:
             self.save_foldername = 'R_Simulator/'
 
 
-class Simulator:
+class TF_Simulator(): #TF Simulator individual (One complete simulator genome)
+    def __init__(self):
+        self.sess = tf.Session()
+        self.saver = tf.train.Saver()
+        self.sess.run(tf.global_variables_initializer())
+
+
+class Task_Simulator: #Simulator Task
     def __init__(self, parameters):
         self.parameters = parameters; self.ssne_param = self.parameters.ssne_param
-        if parameters.arch_type == 'TF_Feedforward':
-            self.agent = mod.TF_SSNE(self.parameters)
-        else:
-            self.agent = mod.SSNE(self.parameters)
-        self.train_data, self.valid_data = self.data_preprocess()
+        self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
+
+        self.train_data, self.valid_data = self.data_preprocess() #Get simulator data
+        self.ssne = mod.TF_SSNE(parameters) #nitialize SSNE engine
+
+        # Simulator save folder for checkpoints
+        self.marker = 'TF_ANN'
+        self.save_foldername = self.parameters.save_foldername
+        if not os.path.exists(self.save_foldername):
+            os.makedirs(self.save_foldername)
+
+        #####CREATE SIMULATOR GRAPH
+        #Placeholder for input and target
+        self.input = tf.placeholder("float", [None, self.num_input])
+        self.target = tf.placeholder("float", [None, self.num_output])
+
+        # Call trainable variables (neural weights)
+        self.w_h1 = tf.Variable(tf.random_uniform([self.num_input, self.num_hidden], -1, 1))
+        self.w_b1 = tf.Variable(tf.random_uniform([1, self.num_hidden], -1, 1))
+        self.w_h2 = tf.Variable(tf.random_uniform([self.num_hidden, self.num_output], -1, 1))
+        self.w_b2 = tf.Variable(tf.random_uniform([1, self.num_output], -1, 1))
+
+        # Feedforward operation
+        self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
+        self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
+        # self.net_out = tf.nn.sigmoid(self.net_out)
+
+        # Define loss function and backpropagation (optimizer)
+        self.cost = tf.losses.absolute_difference(self.target, self.net_out)
+        self.bprop = tf.train.AdamOptimizer(0.1).minimize(self.cost)
+        #bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
+
+
+        #####CREATE POPULATION
+        self.pop = []
+        for i in range(self.parameters.population_size):
+            self.pop.append(TF_Simulator())
+
+
+    def save(self, individual, filename = 'tf_ann.ckpt'):
+        return individual.saver.save(individual.sess, self.save_foldername + filename)
+
+    def load(self, individual, filename = './tf_ann.ckpt'):
+        return individual.saver.restore(individual.sess, self.save_foldername + filename)
+
+    def predict(self, individual, input): #Runs the individual net and computes and output by feedforwarding
+        return individual.sess.run(self.net_out, feed_dict={self.input: input} )
+
 
 
     def init_population(self):
-        self.run_bprop(500)
+        if self.parameters.load_seed_population: #Load seed population
+            for index, individual in enumerate(self.pop):
+                self.load(individual, 'Simulator_' + str(index))
+        else: #Run Backprop
+            self.run_bprop()
 
 
-    def run_bprop(self, max_gens):
+    def run_bprop(self):
         train_x = self.train_data[0:-1]
         train_y = self.train_data[1:,0:-2]
 
-        #Run Bprop for all of the population for a variable number of generations
-        for index, agent in enumerate(self.agent.pop):
-            if index != 0: num_gens = randint(10, max_gens) #Randomize number of gradient descent epochs after the first one to create diversity
-            else: num_gens = max_gens
-            agent.run_bprop(num_gens, train_x, train_y)
-            agent.save('Simulator_' + str(index))
+        for index, individual in enumerate(self.pop):
+            print index,
+            if index != 0: num_gens = randint(1, self.parameters.bprop_max_gens) #Randomize number of gradient descent epochs after the first one to create diversity
+            else: num_gens = self.parameters.bprop_max_gens
+            for gen in range(num_gens):
+                individual.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
+                print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
 
-        #inp = np.reshape(self.train_data[0], (1,21))
-        #print self.agent.pop[0].predict(inp)
-        #self.agent.pop[0].load('Simulator_' + str(0))
-        #print self.agent.pop[0].predict(inp)
-
-        #mod.simulator_results(self.agent.pop[0])
+            #Save individual
+            print self.save(individual, 'Simulator_' + str(index))
 
 
+    def compute_fitness(self, individual, data):
+        fitness = np.zeros(19)
+        input = np.reshape(data[0], (1, 21))  # First training example in its entirety
+        for example in range(len(data) - 1):  # For all training examples
 
+            model_out = self.predict(individual, input)# Time domain simulation
+            for index in range(19): # Calculate error (weakness)
+                fitness[index] += math.fabs(model_out[0][index] - data[example + 1][index])  # Time variant simulation
 
+            # Fill in new input data
+            for k in range(len(model_out)):
+                input[0][k] = model_out[0][k]
+            # Fill in two control variables
+            input[0][19] = data[example + 1][19]
+            input[0][20] = data[example + 1][20]
 
+        return -np.sum(np.square(fitness))/len(data)
 
+    def evolve(self, gen):
 
-    #def save_population(self):
+        #Fitness evaluation list for the generation
+        fitness_evals = [[] for x in xrange(self.parameters.population_size)]
 
+        #Test all individuals and assign fitness
+        for index, individual in enumerate(self.pop): #Test all genomes/individuals
+            fitness = self.compute_fitness(individual, self.train_data)
+            fitness_evals[index] = fitness
+        gen_best_fitness = max(fitness_evals)
 
+        #Champion Individual
+        champion_index = fitness_evals.index(max(fitness_evals))
+        valid_score = self.compute_fitness(self.pop[champion_index], self.valid_data)
+
+        #Save population and HOF
+        if gen % 1000 == 0:
+            for index, individual in enumerate(self.pop): #Save population
+                self.save(individual, 'Simulator_' + str(index))
+            self.save(self.pop[champion_index], 'Champion_Simulator') #Save champion
+            np.savetxt(self.save_foldername + '/gen_tag', np.array([gen + 1]), fmt='%.3f', delimiter=',')
+
+        #SSNE Epoch: Selection and Mutation/Crossover step
+        self.ssne.epoch(self.pop, fitness_evals)
+
+        return gen_best_fitness, valid_score
 
     def data_preprocess(self, filename='ColdAir.csv', downsample_rate=25, split = 1000):
         # Import training data and clear away the two top lines
@@ -146,66 +238,25 @@ class Simulator:
 
         return train_data, valid_data
 
-    def compute_fitness(self, agent_index, data):
-        fitness = np.zeros(19)
-        input = np.reshape(data[0], (21))  # First training example in its entirety
-        for example in range(len(data) - 1):  # For all training examples
-
-            model_out = self.agent.pop[agent_index].feedforward(input)  # Time domain simulation
-            for index in range(19): # Calculate error (weakness)
-                fitness[index] += math.fabs(model_out[index][0] - data[example + 1][index])  # Time variant simulation
-
-            # Fill in new input data
-            for k in range(len(model_out)):
-                input[k] = model_out[k][0]
-            # Fill in two control variables
-            input[19] = data[example + 1][19]
-            input[20] = data[example + 1][20]
-
-        return -np.sum(np.square(fitness))/len(data)
-
-    def evolve(self):
-        best_epoch_reward = -1000000
-
-        for agent_index in range(self.parameters.population_size): #Test all genomes/individuals
-            fitness = self.compute_fitness(agent_index, self.train_data)
-            self.agent.fitness_evals[agent_index] = fitness
-            if fitness > best_epoch_reward: best_epoch_reward = fitness
-
-        #HOF test net
-        champion_index = self.agent.fitness_evals.index(max(self.agent.fitness_evals))
-        valid_score = self.compute_fitness(champion_index, self.valid_data)
-
-        #Save population and HOF
-        if (gen + 1) % 1000 == 0:
-            mod.pickle_object(self.agent.pop, save_foldername + '/simulator_pop')
-            mod.pickle_object(self.agent.pop[champion_index], save_foldername + '/simulator_champion')
-            np.savetxt(save_foldername + '/gen_tag', np.array([gen + 1]), fmt='%.3f', delimiter=',')
-
-        self.agent.epoch()
-        return best_epoch_reward, valid_score
+    def test_restore(self, individual):
+        train_x = self.train_data[0:-1]
+        train_y = self.train_data[1:,0:-2]
+        print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
+        self.load(individual, 'Simulator_' + str(98))
+        print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
 
 if __name__ == "__main__":
     parameters = Parameters()  # Create the Parameters class
     tracker = Tracker(parameters)  # Initiate tracker
     print 'Running Simulator Training ', parameters.arch_type
 
-    simulator = Simulator(parameters)
-    simulator.init_population()
-
-
-
-
-
-    # for gen in range(parameters.total_gens):
-    #
-    #
-    #
-    #
-    #     epoch_reward, valid_score = simulator.evolve()
-    #     print 'Generation:', gen+1, ' Epoch_reward:', "%0.2f" % epoch_reward, '  Score:', "%0.2f" % valid_score, '  Cumul_Score:', "%0.2f" % tracker.hof_avg_fitness
-    #     tracker.add_fitness(epoch_reward, gen)  # Add average global performance to tracker
-    #     tracker.add_hof_fitness(valid_score, gen)  # Add best global performance to tracker
+    sim_task = Task_Simulator(parameters)
+    sim_task.init_population()
+    for gen in range(1, parameters.total_gens):
+        gen_best_fitness, valid_score = sim_task.evolve(gen)
+        print 'Generation:', gen, ' Epoch_reward:', "%0.2f" % gen_best_fitness, ' Valid Score:', "%0.2f" % valid_score, '  Cumul_Valid_Score:', "%0.2f" % tracker.hof_avg_fitness
+        tracker.add_fitness(gen_best_fitness, gen)  # Add average global performance to tracker
+        tracker.add_hof_fitness(valid_score, gen)  # Add best global performance to tracker
 
 
 
