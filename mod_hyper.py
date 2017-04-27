@@ -3387,6 +3387,65 @@ def import_arch(seed = 'Evolutionary/seed.json'): #Get model architecture
     model_arch = model_from_json(json_data)
     return model_arch
 
+def simulator_test_perfect(model, filename = 'ColdAir.csv', downsample_rate=25):
+    from matplotlib import pyplot as plt
+    plt.switch_backend('Qt4Agg')
+
+    # Import training data and clear away the two top lines
+    data = np.loadtxt(filename, delimiter=',', skiprows=2)
+
+    # Splice data (downsample)
+    ignore = np.copy(data)
+    data = data[0::downsample_rate]
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            if (i != data.shape[0] - 1):
+                data[i][j] = ignore[(i * downsample_rate):(i + 1) * downsample_rate,
+                             j].sum() / downsample_rate
+            else:
+                residue = ignore.shape[0] - i * downsample_rate
+                data[i][j] = ignore[(i * downsample_rate):i * downsample_rate + residue, j].sum() / residue
+
+    # Normalize between 0-0.99
+    normalizer = np.zeros(data.shape[1])
+    min = np.zeros(len(data[0]))
+    max = np.zeros(len(data[0]))
+    for i in range(len(data[0])):
+        min[i] = np.amin(data[:, i])
+        max[i] = np.amax(data[:, i])
+        normalizer[i] = max[i] - min[i] + 0.00001
+        data[:, i] = (data[:, i] - min[i]) / normalizer[i]
+
+    print ('TESTING NOW')
+    input = np.reshape(data[0], (1, 21))  # First input to the simulatior
+    track_target = np.reshape(np.zeros((len(data) - 1) * 19), (19, len(data) - 1))
+    track_output = np.reshape(np.zeros((len(data) - 1) * 19), (19, len(data) - 1))
+
+    for example in range(len(data)-1):  # For all training examples
+        model_out = model.predict(input)
+
+        # Track index
+        for index in range(19):
+            track_output[index][example] = model_out[0][index]# * normalizer[index] + min[index]
+            track_target[index][example] = data[example+1][index]# * normalizer[index] + min[index]
+
+        # Fill in new input data
+        for k in range(len(model_out)):
+            input[k] = input = np.reshape(data[example+1], (1, 21))
+        # Fill in two control variables
+        input[0][19] = data[example + 1][19]
+        input[0][20] = data[example + 1][20]
+
+
+    for index in range(19):
+        plt.plot(track_target[index], 'r--',label='Actual Data: ' + str(index))
+        plt.plot(track_output[index], 'b-',label='TF_Simulator: ' + str(index))
+        #np.savetxt('R_Simulator/output_' + str(index) + '.csv', track_output[index])
+        #np.savetxt('R_Simulator/target_' + str(index) + '.csv', track_target[index])
+        plt.legend( loc='upper right',prop={'size':6})
+        #plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
+        #print track_output[index]
+        plt.show()
 
 def simulator_results(model, filename = 'ColdAir.csv', downsample_rate=25):
     from matplotlib import pyplot as plt
@@ -3427,12 +3486,12 @@ def simulator_results(model, filename = 'ColdAir.csv', downsample_rate=25):
 
         # Track index
         for index in range(19):
-            track_output[index][example] = model_out[0][index] * normalizer[index] + min[index]
-            track_target[index][example] = data[example+1][index] * normalizer[index] + min[index]
+            track_output[index][example] = model_out[0][index]# * normalizer[index] + min[index]
+            track_target[index][example] = data[example+1][index]# * normalizer[index] + min[index]
 
         # Fill in new input data
-        for k in range(len(model_out)):
-            input[k] = model_out[0][k]
+        for k in range(len(model_out[0])):
+            input[0][k] = model_out[0][k]
         # Fill in two control variables
         input[0][19] = data[example + 1][19]
         input[0][20] = data[example + 1][20]
@@ -3447,6 +3506,78 @@ def simulator_results(model, filename = 'ColdAir.csv', downsample_rate=25):
         #plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
         #print track_output[index]
         plt.show()
+
+
+def controller_results(individual, setpoints, start_controller_input, start_sim_input, simulator):  # Controller fitness
+    from matplotlib import pyplot as plt
+    plt.switch_backend('Qt4Agg')
+
+    control_input = np.copy(start_controller_input)  # Input to the controller
+    sim_input = np.copy(start_sim_input)  # Input to the simulator
+    track_output = np.reshape(np.zeros(len(setpoints) - 1), (len(setpoints) - 1, 1))
+
+    for example in range(len(setpoints) - 1):  # For all training examples
+        # Fill in the setpoint to control input
+        control_input[0][-1] = setpoints[example][0]
+
+        # # Add noise to the state input to the controller
+        # if self.parameters.sensor_noise != 0:  # Add sensor noise
+        #     for i in range(19):
+        #         std = self.parameters.sensor_noise * abs(noise_input[0][i]) / 100.0
+        #         if std != 0:
+        #             noise_input[0][i] += np.random.normal(0, std / 2.0)
+        #
+        # if self.parameters.sensor_failure != None:  # Failed sensor outputs 0 regardless
+        #     for i in self.parameters.sensor_failure:
+        #         noise_input[0][i] = 0
+        #
+
+        # RUN THE CONTROLLER TO GET CONTROL OUTPUT
+        control_out = individual.predict(control_input)
+        #
+        # # Add actuator noise (controls)
+        # if self.parameters.actuator_noise != 0:
+        #     for i in range(len(control_out[0])):
+        #         std = self.parameters.actuator_noise * abs(control_out[0][i]) / 100.0
+        #         if std != 0:
+        #             control_out[0][i] += np.random.normal(0, std / 2.0)
+        #
+        # if self.parameters.actuator_failure != None:  # Failed actuator outputs 0 regardless
+        #     for i in self.parameters.actuator_failure:
+        #         control_out[0][i] = 0
+
+
+        # Fill in the controls
+        sim_input[0][19] = control_out[0][0]
+        sim_input[0][20] = control_out[0][1]
+
+        # Use the simulator to get the next state
+        simulator_out = simulator.predict(sim_input)
+
+        # Calculate error (weakness)
+        track_output[example][0] = simulator_out[0][11]
+        #weakness += math.fabs(simulator_out[0][self.parameters.target_sensor] - setpoints[example][0])  # Time variant simulation
+
+        # Fill in the simulator inputs and control inputs
+        for i in range(simulator_out.shape[-1]):
+            sim_input[0][i] = simulator_out[0][i]
+            control_input[0][i] = simulator_out[0][i]
+
+        #decorator = np.reshape(np.arange(len(setpoints) - 1) + 1, (len(setpoints) - 1, 1))
+        #setpoints = np.array(setpoints[0:-1])
+        #setpoints = np.concatenate((decorator, setpoints))
+        #track_output = np.concatenate((decorator, track_output))
+
+    plt.plot(setpoints, 'r--', label='Setpoints' )
+    plt.plot(track_output, 'b-', label='Net_Output')
+    # np.savetxt('R_Simulator/output_' + str(index) + '.csv', track_output[index])
+    # np.savetxt('R_Simulator/target_' + str(index) + '.csv', track_target[index])
+    plt.legend(loc='upper right', prop={'size': 6})
+    # plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
+    # print track_output[index]
+    plt.show()
+
+
 
 def pickle_object(obj, filename):
     import cPickle
