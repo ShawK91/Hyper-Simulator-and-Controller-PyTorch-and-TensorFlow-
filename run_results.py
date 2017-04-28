@@ -5,14 +5,19 @@ from scipy.special import expit
 import tensorflow as tf
 from copy import deepcopy
 from matplotlib import pyplot as plt
+
 plt.switch_backend('Qt4Agg')
 
 
-class Tracker(): #Tracker
+class Tracker():  # Tracker
     def __init__(self, parameters):
         self.foldername = parameters.save_foldername + '/0000_CSV'
-        self.fitnesses = []; self.avg_fitness = 0; self.tr_avg_fit = []
-        self.hof_fitnesses = []; self.hof_avg_fitness = 0; self.hof_tr_avg_fit = []
+        self.fitnesses = [];
+        self.avg_fitness = 0;
+        self.tr_avg_fit = []
+        self.hof_fitnesses = [];
+        self.hof_avg_fitness = 0;
+        self.hof_tr_avg_fit = []
         if not os.path.exists(self.foldername):
             os.makedirs(self.foldername)
         self.file_save = 'Controller.csv'
@@ -21,8 +26,8 @@ class Tracker(): #Tracker
         self.fitnesses.append(fitness)
         if len(self.fitnesses) > 100:
             self.fitnesses.pop(0)
-        self.avg_fitness = sum(self.fitnesses)/len(self.fitnesses)
-        if generation % 10 == 0: #Save to csv file
+        self.avg_fitness = sum(self.fitnesses) / len(self.fitnesses)
+        if generation % 10 == 0:  # Save to csv file
             filename = self.foldername + '/train_' + self.file_save
             self.tr_avg_fit.append(np.array([generation, self.avg_fitness]))
             np.savetxt(filename, np.array(self.tr_avg_fit), fmt='%.3f', delimiter=',')
@@ -31,8 +36,8 @@ class Tracker(): #Tracker
         self.hof_fitnesses.append(hof_fitness)
         if len(self.hof_fitnesses) > 100:
             self.hof_fitnesses.pop(0)
-        self.hof_avg_fitness = sum(self.hof_fitnesses)/len(self.hof_fitnesses)
-        if generation % 10 == 0: #Save to csv file
+        self.hof_avg_fitness = sum(self.hof_fitnesses) / len(self.hof_fitnesses)
+        if generation % 10 == 0:  # Save to csv file
             filename = self.foldername + '/valid_' + self.file_save
             self.hof_tr_avg_fit.append(np.array([generation, self.hof_avg_fitness]))
             np.savetxt(filename, np.array(self.hof_tr_avg_fit), fmt='%.3f', delimiter=',')
@@ -40,6 +45,7 @@ class Tracker(): #Tracker
     def save_csv(self, generation, filename):
         self.tr_avg_fit.append(np.array([generation, self.avg_fitness]))
         np.savetxt(filename, np.array(self.tr_avg_fit), fmt='%.3f', delimiter=',')
+
 
 class SSNE_param:
     def __init__(self):
@@ -51,45 +57,51 @@ class SSNE_param:
         self.crossover_prob = 0.1
         self.mutation_prob = 0.9
         self.weight_magnitude_limit = 10000000
-        #self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
+        # self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
+
 
 class Parameters:
     def __init__(self):
-            self.population_size = 100
-            self.load_seed = True #Loads a seed population from the save_foldername
-                                              # IF FALSE: Runs Backpropagation, saves it and uses that
-            #Controller choices
-            self.bprop_max_gens = 1000
-            self.target_sensor = 11 #Turbine speed the sensor to control
-            self.run_time = 300 #Controller Run time
+        self.population_size = 100
+        self.load_seed = True # Loads a seed population from the save_foldername
+        # IF FALSE: Runs Backpropagation, saves it and uses that
+        # Controller choices
+        self.bprop_max_gens = 1000
+        self.target_sensor = 11  # Turbine speed the sensor to control
+        self.run_time = 300  # Controller Run time
 
-            #COntroller noise
-            self.sensor_noise = 0.0
-            self.sensor_failure = None  # Options: None, [11,15] permutations
-            self.actuator_noise = 0.0
-            self.actuator_failure = None  # Options: None, [0,1] permutations
+        # COntroller noise
+        self.sensor_noise = 0.0
+        self.sensor_failure = None  # Options: None, [11,15] permutations
+        self.actuator_noise = 0.0
+        self.actuator_failure = None  # Options: None, [0,1] permutations
 
-            # Reconfigurability parameters
-            self.is_random_initial_state = False  # Start state of controller
-            self.num_profiles = 3
+        # Reconfigurability parameters
+        self.is_random_initial_state = False  # Start state of controller
+        self.num_profiles = 3
 
-            #SSNE stuff
-            self.ssne_param = SSNE_param()
-            self.total_gens = 100000
-            self.num_evals = 10 #Number of independent evaluations before getting a fitness score
-            #Determine the nerual archiecture
-            self.arch_type = 3 #1 GRU
-                               #2 GRU-MB
-                               #3 TF_FEEDFORWARD
+        # SSNE stuff
+        self.ssne_param = SSNE_param()
+        self.total_gens = 100000
+        self.num_evals = 10  # Number of independent evaluations before getting a fitness score
+        # Determine the nerual archiecture
+        self.arch_type = 3  # 1 GRU
+        # 2 GRU-MB
+        # 3 TF_FEEDFORWARD
 
-            if self.arch_type == 1: self.arch_type = 'GRU'
-            elif self.arch_type ==2: self.arch_type = 'GRU-MB'
-            elif self.arch_type == 3: self.arch_type = 'TF_Feedforward'
-            else: sys.exit('Invalid choice of neural architecture')
+        if self.arch_type == 1:
+            self.arch_type = 'GRU'
+        elif self.arch_type == 2:
+            self.arch_type = 'GRU-MB'
+        elif self.arch_type == 3:
+            self.arch_type = 'TF_Feedforward'
+        else:
+            sys.exit('Invalid choice of neural architecture')
 
-            self.save_foldername = 'R_Controller/'
+        self.save_foldername = 'R_Controller/'
 
-class Fast_Simulator(): #TF Simulator individual (One complete simulator genome)
+
+class Fast_Simulator():  # TF Simulator individual (One complete simulator genome)
     def __init__(self):
         self.W = None
 
@@ -101,7 +113,8 @@ class Fast_Simulator(): #TF Simulator individual (One complete simulator genome)
     def from_tf(self, tf_sess):
         self.W = tf_sess.run(tf.trainable_variables())
 
-class Fast_Controller(): #TF Simulator individual (One complete simulator genome)
+
+class Fast_Controller():  # TF Simulator individual (One complete simulator genome)
     def __init__(self):
         self.W = None
 
@@ -113,13 +126,17 @@ class Fast_Controller(): #TF Simulator individual (One complete simulator genome
     def from_tf(self, tf_sess):
         self.W = tf_sess.run(tf.trainable_variables())
 
-class Task_Controller: #Simulator Task
+
+class Task_Controller:  # Simulator Task
     def __init__(self, parameters):
-        self.parameters = parameters; self.ssne_param = self.parameters.ssne_param
-        self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
+        self.parameters = parameters;
+        self.ssne_param = self.parameters.ssne_param
+        self.num_input = self.ssne_param.num_input;
+        self.num_hidden = self.ssne_param.num_hnodes;
+        self.num_output = self.ssne_param.num_output
 
-        self.train_data, self.valid_data = self.data_preprocess() #Get simulator data
-        self.ssne = mod.FAST_SSNE(parameters) #nitialize SSNE engine
+        self.train_data, self.valid_data = self.data_preprocess()  # Get simulator data
+        self.ssne = mod.FAST_SSNE(parameters)  # nitialize SSNE engine
 
         # Simulator save folder for checkpoints
         self.marker = 'TF_ANN'
@@ -128,7 +145,7 @@ class Task_Controller: #Simulator Task
             os.makedirs(self.save_foldername)
 
         #####CREATE SIMULATOR GRAPH
-        #Placeholder for input and target
+        # Placeholder for input and target
         self.input = tf.placeholder("float", [None, self.num_input])
         self.target = tf.placeholder("float", [None, self.num_output])
 
@@ -141,19 +158,19 @@ class Task_Controller: #Simulator Task
         # Feedforward operation
         self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
         self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
-        # self.net_out = tf.nn.sigmoid(self.net_out)
+        #self.net_out = tf.nn.sigmoid(self.net_out)
 
         # Define loss function and backpropagation (optimizer)
-        self.cost = tf.losses.absolute_difference(self.target, self.net_out)
+        self.cost = tf.reduce_sum(pow(abs(self.target - self.net_out), 0.01))
         self.bprop = tf.train.AdamOptimizer(0.05).minimize(self.cost)
-        #bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
+        # bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
 
-        #Open session
+        # Open session
         self.sess = tf.Session()
         self.saver = tf.train.Saver()
         self.sess.run(tf.global_variables_initializer())
 
-        #Load simulator
+        # Load simulator
         self.simulator = mod.unpickle('R_Controller/Champion_Simulator')
         #mod.simulator_results(self.simulator)
 
@@ -163,43 +180,41 @@ class Task_Controller: #Simulator Task
             self.pop.append(Fast_Controller())
 
         ###Init population
-        if self.parameters.load_seed: #Load seed population
+        if self.parameters.load_seed:  # Load seed population
             self.saver.restore(self.sess, self.save_foldername + 'bprop_controller')
-        else: #Run Backprop
+        else:  # Run Backprop
             self.run_bprop()
 
-        self.pop[0].from_tf(self.sess) #Convert TF model into Fast_NET for population instance 1
-        #Init population by randomly perturbing the first one
+        self.pop[0].from_tf(self.sess)  # Convert TF model into Fast_NET for population instance 1
+        # Init population by randomly perturbing the first one
         for individual in self.pop[1:]:
-            individual.W = deepcopy(self.pop[0].W) #Copy pop 0 genome
+            individual.W = deepcopy(self.pop[0].W)  # Copy pop 0 genome
             for w in individual.W:
                 mut = np.reshape(np.random.normal(0, 2, w.size), (w.shape[0], w.shape[-1]))
                 w += mut
 
-    def save(self, individual, filename ):
+    def save(self, individual, filename):
         mod.pickle_object(individual, filename)
-        #return individual.saver.save(individual.sess, self.save_foldername + filename)
+        # return individual.saver.save(individual.sess, self.save_foldername + filename)
 
-    def load(self, individual, filename ):
+    def load(self, individual, filename):
         return individual.saver.restore(individual.sess, self.save_foldername + filename)
 
-    def predict(self, individual, input): #Runs the individual net and computes and output by feedforwarding
+    def predict(self, individual, input):  # Runs the individual net and computes and output by feedforwarding
         return individual.predict(input)
 
     def run_bprop(self):
-        train_x = self.train_data[0:-1,0:-2]
-        sensor_target = self.train_data[1:,self.parameters.target_sensor:self.parameters.target_sensor+1]
-        train_x = np.concatenate((train_x, sensor_target), axis=1) #Input training data
-        train_y = self.train_data[0:-1,-2:] #Target Controller Output
+        train_x = self.train_data[0:-1, 0:-2]
+        sensor_target = self.train_data[1:, self.parameters.target_sensor:self.parameters.target_sensor + 1]
+        train_x = np.concatenate((train_x, sensor_target), axis=1)  # Input training data
+        train_y = self.train_data[0:-1, -2:]  # Target Controller Output
 
         for gen in range(self.parameters.bprop_max_gens):
             self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
             print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
-        self.saver.save(self.sess, self.save_foldername + 'bprop_controller') #Save individual
+        self.saver.save(self.sess, self.save_foldername + 'bprop_controller')  # Save individual
 
-
-
-    def plot_controller(self, individual):
+    def plot_controller(self, individual, data_setpoints=False):
         setpoints = self.get_setpoints()
         if self.parameters.is_random_initial_state:
             start_sim_input = np.copy(self.train_data[randint(0, len(self.train_data))])
@@ -207,7 +222,12 @@ class Task_Controller: #Simulator Task
             start_sim_input = np.reshape(np.copy(self.train_data[0]), (1, len(self.train_data[0])))
         start_controller_input = np.reshape(np.zeros(self.ssne_param.num_input), (1, self.ssne_param.num_input))
         for i in range(start_sim_input.shape[-1] - 2): start_controller_input[0][i] = start_sim_input[0][i]
-        mod.controller_results(individual, setpoints, start_controller_input, start_sim_input, self.simulator)
+
+        if data_setpoints: #Bprop test
+            setpoints = self.train_data[0:, 11:12]
+            mod.controller_results_bprop(individual, setpoints, start_controller_input, start_sim_input, self.simulator, self.train_data[0:,0:-2])
+        else:
+            mod.controller_results(individual, setpoints, start_controller_input, start_sim_input, self.simulator)
 
     def get_setpoints(self):
 
@@ -215,22 +235,23 @@ class Task_Controller: #Simulator Task
 
         for profile in range(parameters.num_profiles):
             multiplier = randint(1, 5)
-            #print profile, multiplier
-            for i in range(self.parameters.run_time/self.parameters.num_profiles):
+            # print profile, multiplier
+            for i in range(self.parameters.run_time / self.parameters.num_profiles):
                 turbine_speed = math.sin(i * 0.2 * multiplier)
-                turbine_speed *= 0.3 #Between -0.3 and 0.3
-                turbine_speed += 0.5  #Between 0.2 and 0.8 centered on 0.5
-                desired_setpoints[profile * self.parameters.run_time/self.parameters.num_profiles + i][0] = turbine_speed
+                turbine_speed *= 0.3  # Between -0.3 and 0.3
+                turbine_speed += 0.5  # Between 0.2 and 0.8 centered on 0.5
+                desired_setpoints[profile * self.parameters.run_time / self.parameters.num_profiles + i][
+                    0] = turbine_speed
 
-        #plt.plot(desired_setpoints, 'r--', label='Setpoints')
-        #plt.show()
+        # plt.plot(desired_setpoints, 'r--', label='Setpoints')
+        # plt.show()
         return desired_setpoints
 
-    def compute_fitness(self, individual, setpoints, start_controller_input, start_sim_input): #Controller fitness
+    def compute_fitness(self, individual, setpoints, start_controller_input, start_sim_input):  # Controller fitness
         weakness = 0.0
 
-        control_input = np.copy(start_controller_input) #Input to the controller
-        sim_input = np.copy(start_sim_input) #Input to the simulator
+        control_input = np.copy(start_controller_input)  # Input to the controller
+        sim_input = np.copy(start_sim_input)  # Input to the simulator
 
         for example in range(len(setpoints) - 1):  # For all training examples
             # Fill in the setpoint to control input
@@ -248,7 +269,7 @@ class Task_Controller: #Simulator Task
             #         noise_input[0][i] = 0
             #
 
-            #RUN THE CONTROLLER TO GET CONTROL OUTPUT
+            # RUN THE CONTROLLER TO GET CONTROL OUTPUT
             control_out = individual.predict(control_input)
             #
             # # Add actuator noise (controls)
@@ -263,7 +284,7 @@ class Task_Controller: #Simulator Task
             #         control_out[0][i] = 0
 
 
-            #Fill in the controls
+            # Fill in the controls
             sim_input[0][19] = control_out[0][0]
             sim_input[0][20] = control_out[0][1]
 
@@ -271,61 +292,64 @@ class Task_Controller: #Simulator Task
             simulator_out = self.simulator.predict(sim_input)
 
             # Calculate error (weakness)
-            weakness += math.fabs(simulator_out[0][self.parameters.target_sensor] - setpoints[example][0])  # Time variant simulation
+            weakness += math.fabs(
+                simulator_out[0][self.parameters.target_sensor] - setpoints[example][0])  # Time variant simulation
 
             # Fill in the simulator inputs and control inputs
             for i in range(simulator_out.shape[-1]):
                 sim_input[0][i] = simulator_out[0][i]
                 control_input[0][i] = simulator_out[0][i]
 
-
         return -weakness
 
     def evolve(self, gen):
 
-        #Fitness evaluation list for the generation
+        # Fitness evaluation list for the generation
         fitness_evals = [0.0] * (self.parameters.population_size)
 
-        for eval in range(parameters.num_evals): #Take multiple samples
-            #Figure initial position and setpoints for the generation
+        for eval in range(parameters.num_evals):  # Take multiple samples
+            # Figure initial position and setpoints for the generation
             setpoints = self.get_setpoints()
-            if self.parameters.is_random_initial_state: start_sim_input = np.copy(self.train_data[randint(0,len(self.train_data))])
-            else: start_sim_input = np.reshape(np.copy(self.train_data[0]), (1, len(self.train_data[0])))
+            if self.parameters.is_random_initial_state:
+                start_sim_input = np.copy(self.train_data[randint(0, len(self.train_data))])
+            else:
+                start_sim_input = np.reshape(np.copy(self.train_data[0]), (1, len(self.train_data[0])))
             start_controller_input = np.reshape(np.zeros(self.ssne_param.num_input), (1, self.ssne_param.num_input))
-            for i in range(start_sim_input.shape[-1]-2): start_controller_input[0][i] = start_sim_input[0][i]
+            for i in range(start_sim_input.shape[-1] - 2): start_controller_input[0][i] = start_sim_input[0][i]
 
-
-            #Test all individuals and assign fitness
-            for index, individual in enumerate(self.pop): #Test all genomes/individuals
+            # Test all individuals and assign fitness
+            for index, individual in enumerate(self.pop):  # Test all genomes/individuals
                 fitness = self.compute_fitness(individual, setpoints, start_controller_input, start_sim_input)
-                fitness_evals[index] += fitness/(1.0*parameters.num_evals)
+                fitness_evals[index] += fitness / (1.0 * parameters.num_evals)
         gen_best_fitness = max(fitness_evals)
 
-        #Champion Individual
+        # Champion Individual
         champion_index = fitness_evals.index(max(fitness_evals))
         valid_score = 0.0
         for eval in range(parameters.num_evals):  # Take multiple samples
             setpoints = self.get_setpoints()
-            if self.parameters.is_random_initial_state: start_sim_input = np.copy(self.valid_data[randint(0,len(self.valid_data))])
-            else: start_sim_input = np.reshape(np.copy(self.valid_data[0]), (1, len(self.valid_data[0])))
+            if self.parameters.is_random_initial_state:
+                start_sim_input = np.copy(self.valid_data[randint(0, len(self.valid_data))])
+            else:
+                start_sim_input = np.reshape(np.copy(self.valid_data[0]), (1, len(self.valid_data[0])))
             start_controller_input = np.reshape(np.zeros(self.ssne_param.num_input), (1, self.ssne_param.num_input))
-            for i in range(start_sim_input.shape[-1]-2): start_controller_input[0][i] = start_sim_input[0][i]
-            valid_score += self.compute_fitness(self.pop[champion_index], setpoints, start_controller_input, start_sim_input)/(1.0*parameters.num_evals)
+            for i in range(start_sim_input.shape[-1] - 2): start_controller_input[0][i] = start_sim_input[0][i]
+            valid_score += self.compute_fitness(self.pop[champion_index], setpoints, start_controller_input,
+                                                start_sim_input) / (1.0 * parameters.num_evals)
 
-
-        #Save population and HOF
+        # Save population and HOF
         if gen % 1 == 0:
-            for index, individual in enumerate(self.pop): #Save population
+            for index, individual in enumerate(self.pop):  # Save population
                 self.save(individual, self.save_foldername + 'Controller_' + str(index))
-            self.save(self.pop[champion_index], self.save_foldername + 'Champion_Controller') #Save champion
+            self.save(self.pop[champion_index], self.save_foldername + 'Champion_Controller')  # Save champion
             np.savetxt(self.save_foldername + '/gen_tag', np.array([gen + 1]), fmt='%.3f', delimiter=',')
 
-        #SSNE Epoch: Selection and Mutation/Crossover step
+        # SSNE Epoch: Selection and Mutation/Crossover step
         self.ssne.epoch(self.pop, fitness_evals)
 
         return gen_best_fitness, valid_score
 
-    def data_preprocess(self, filename='ColdAir.csv', downsample_rate=25, split = 1000):
+    def data_preprocess(self, filename='ColdAir.csv', downsample_rate=25, split=1000):
         # Import training data and clear away the two top lines
         data = np.loadtxt(filename, delimiter=',', skiprows=2)
 
@@ -336,7 +360,7 @@ class Task_Controller: #Simulator Task
             for j in range(data.shape[1]):
                 if (i != data.shape[0] - 1):
                     data[i][j] = ignore[(i * downsample_rate):(i + 1) * downsample_rate,
-                                       j].sum() / downsample_rate
+                                 j].sum() / downsample_rate
                 else:
                     residue = ignore.shape[0] - i * downsample_rate
                     data[i][j] = ignore[(i * downsample_rate):i * downsample_rate + residue, j].sum() / residue
@@ -351,7 +375,7 @@ class Task_Controller: #Simulator Task
             normalizer[i] = max[i] - min[i] + 0.00001
             data[:, i] = (data[:, i] - min[i]) / normalizer[i]
 
-        #Train/Valid split
+        # Train/Valid split
         train_data = data[0:split]
         valid_data = data[split:len(data)]
 
@@ -359,10 +383,11 @@ class Task_Controller: #Simulator Task
 
     def test_restore(self, individual):
         train_x = self.train_data[0:-1]
-        train_y = self.train_data[1:,0:-2]
+        train_y = self.train_data[1:, 0:-2]
         print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
         self.load(individual, 'Controller_' + str(98))
         print individual.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
+
 
 if __name__ == "__main__":
     parameters = Parameters()  # Create the Parameters class
@@ -370,11 +395,9 @@ if __name__ == "__main__":
     print 'Running Controller Training ', parameters.arch_type
 
     control_task = Task_Controller(parameters)
-    for gen in range(1, parameters.total_gens):
-        gen_best_fitness, valid_score = control_task.evolve(gen)
-        print 'Generation:', gen, ' Epoch_reward:', "%0.2f" % gen_best_fitness, ' Valid Score:', "%0.2f" % valid_score, '  Cumul_Valid_Score:', "%0.2f" % tracker.hof_avg_fitness
-        tracker.add_fitness(gen_best_fitness, gen)  # Add average global performance to tracker
-        tracker.add_hof_fitness(valid_score, gen)  # Add best global performance to tracker
+
+    test_control = mod.unpickle(parameters.save_foldername + 'Champion_Controller')
+    control_task.plot_controller(test_control)
 
 
 

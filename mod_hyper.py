@@ -3568,11 +3568,121 @@ def controller_results(individual, setpoints, start_controller_input, start_sim_
         #setpoints = np.concatenate((decorator, setpoints))
         #track_output = np.concatenate((decorator, track_output))
 
-    plt.plot(setpoints, 'r--', label='Setpoints' )
-    plt.plot(track_output, 'b-', label='Net_Output')
+    plt.plot(setpoints, 'r--', label='Desired Turbine Speed' )
+    plt.plot(track_output, 'b-', label='Achieved Turbine Speed')
     # np.savetxt('R_Simulator/output_' + str(index) + '.csv', track_output[index])
     # np.savetxt('R_Simulator/target_' + str(index) + '.csv', track_target[index])
-    plt.legend(loc='upper right', prop={'size': 6})
+    plt.legend(loc='upper right', prop={'size': 15})
+    plt.xlabel("Time", fontsize = 15)
+    plt.ylabel("ST-502 (Turbine Speed)", fontsize=15)
+    axes = plt.gca()
+    axes.set_ylim([0, 1.1])
+    # plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
+    # print track_output[index]
+    plt.show()
+
+def controller_results_bprop(individual, setpoints, start_controller_input, start_sim_input, simulator, train_x):  # Controller fitness
+    from matplotlib import pyplot as plt
+    plt.switch_backend('Qt4Agg')
+
+    #Normalizer #TODO DONT DO THIS
+    if True:
+        # Import training data and clear away the two top lines
+        downsample_rate = 25
+        data = np.loadtxt('ColdAir.csv', delimiter=',', skiprows=2)
+
+        # Splice data (downsample)
+        ignore = np.copy(data)
+        data = data[0::downsample_rate]
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                if (i != data.shape[0] - 1):
+                    data[i][j] = ignore[(i * downsample_rate):(i + 1) * downsample_rate,
+                                 j].sum() / downsample_rate
+                else:
+                    residue = ignore.shape[0] - i * downsample_rate
+                    data[i][j] = ignore[(i * downsample_rate):i * downsample_rate + residue, j].sum() / residue
+
+        # Normalize between 0-0.99
+        normalizer = np.zeros(data.shape[1])
+        min = np.zeros(len(data[0]))
+        max = np.zeros(len(data[0]))
+        for i in range(len(data[0])):
+            min[i] = np.amin(data[:, i])
+            max[i] = np.amax(data[:, i])
+            normalizer[i] = max[i] - min[i] + 0.00001
+            data[:, i] = (data[:, i] - min[i]) / normalizer[i]
+
+        control_input = np.copy(start_controller_input)  # Input to the controller
+        sim_input = np.copy(start_sim_input)  # Input to the simulator
+        track_output = np.reshape(np.zeros(len(setpoints) - 1), (len(setpoints) - 1, 1))
+
+    for example in range(len(setpoints) - 1):  # For all training examples
+        # Fill in the setpoint to control input
+        control_input[0][-1] = setpoints[example][0]
+
+        # # Add noise to the state input to the controller
+        # if self.parameters.sensor_noise != 0:  # Add sensor noise
+        #     for i in range(19):
+        #         std = self.parameters.sensor_noise * abs(noise_input[0][i]) / 100.0
+        #         if std != 0:
+        #             noise_input[0][i] += np.random.normal(0, std / 2.0)
+        #
+        # if self.parameters.sensor_failure != None:  # Failed sensor outputs 0 regardless
+        #     for i in self.parameters.sensor_failure:
+        #         noise_input[0][i] = 0
+        #
+
+        # RUN THE CONTROLLER TO GET CONTROL OUTPUT
+        control_out = individual.predict(control_input)
+
+        #
+        # # Add actuator noise (controls)
+        # if self.parameters.actuator_noise != 0:
+        #     for i in range(len(control_out[0])):
+        #         std = self.parameters.actuator_noise * abs(control_out[0][i]) / 100.0
+        #         if std != 0:
+        #             control_out[0][i] += np.random.normal(0, std / 2.0)
+        #
+        # if self.parameters.actuator_failure != None:  # Failed actuator outputs 0 regardless
+        #     for i in self.parameters.actuator_failure:
+        #         control_out[0][i] = 0
+
+
+        # Fill in the controls
+        sim_input[0][19] = control_out[0][0]
+        sim_input[0][20] = control_out[0][1]
+
+        # Use the simulator to get the next state
+        simulator_out = simulator.predict(sim_input)
+
+        # Calculate error (weakness)
+        track_output[example][0] = simulator_out[0][11] * normalizer[11] + min[11]
+        setpoints[example][0] = setpoints[example][0] * normalizer[11] + min[11]
+        #weakness += math.fabs(simulator_out[0][self.parameters.target_sensor] - setpoints[example][0])  # Time variant simulation
+
+        # Fill in the simulator inputs and control inputs
+        for i in range(simulator_out.shape[-1]):
+            sim_input[0][i] = train_x[example+1][i]
+            control_input[0][i] = train_x[example+1][i]
+
+            #sim_input[0][i] = simulator_out[0][i]
+            #control_input[0][i] = simulator_out[0][i]
+
+
+
+        #decorator = np.reshape(np.arange(len(setpoints) - 1) + 1, (len(setpoints) - 1, 1))
+        #setpoints = np.array(setpoints[0:-1])
+        #setpoints = np.concatenate((decorator, setpoints))
+        #track_output = np.concatenate((decorator, track_output))
+
+    plt.plot(setpoints[0:-10,0:], 'r--', label='Target Turbine Speed' )
+    plt.plot(track_output[0:-10,0:], 'b-', label='Controller Turbine Speed ')
+    # np.savetxt('R_Simulator/output_' + str(index) + '.csv', track_output[index])
+    # np.savetxt('R_Simulator/target_' + str(index) + '.csv', track_target[index])
+    plt.legend(loc='lower right', prop={'size': 15})
+    plt.xlabel("Time (min)", fontsize = 15)
+    plt.ylabel("ST-502 (Turbine Speed)", fontsize=15)
     # plt.savefig('Graphs/' + 'Index' + str(index) + '.png')
     # print track_output[index]
     plt.show()
