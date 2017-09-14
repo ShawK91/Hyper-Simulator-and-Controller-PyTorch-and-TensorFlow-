@@ -63,7 +63,7 @@ class Parameters:
             self.target_sensor = 11 #Turbine speed the sensor to control
             self.run_time = 300 #Controller Run time
 
-            #COntroller noise
+            #Controller noise
             self.sensor_noise = 0.0
             self.sensor_failure = None  # Options: None, [11,15] permutations
             self.actuator_noise = 0.0
@@ -197,9 +197,7 @@ class Task_Controller: #Simulator Task
             print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
         self.saver.save(self.sess, self.save_foldername + 'bprop_controller') #Save individual
 
-
-
-    def plot_controller(self, individual):
+    def plot_controller(self, individual, data_setpoints=False):
         setpoints = self.get_setpoints()
         if self.parameters.is_random_initial_state:
             start_sim_input = np.copy(self.train_data[randint(0, len(self.train_data))])
@@ -207,7 +205,12 @@ class Task_Controller: #Simulator Task
             start_sim_input = np.reshape(np.copy(self.train_data[0]), (1, len(self.train_data[0])))
         start_controller_input = np.reshape(np.zeros(self.ssne_param.num_input), (1, self.ssne_param.num_input))
         for i in range(start_sim_input.shape[-1] - 2): start_controller_input[0][i] = start_sim_input[0][i]
-        mod.controller_results(individual, setpoints, start_controller_input, start_sim_input, self.simulator)
+
+        if data_setpoints: #Bprop test
+            setpoints = self.train_data[0:, 11:12]
+            mod.controller_results_bprop(individual, setpoints, start_controller_input, start_sim_input, self.simulator, self.train_data[0:,0:-2])
+        else:
+            mod.controller_results(individual, setpoints, start_controller_input, start_sim_input, self.simulator)
 
     def get_setpoints(self):
 

@@ -355,7 +355,6 @@ class TF_SSNE:
 
 
 
-
 class TF_SSNE_BCK:
     def __init__(self, parameters):
         self.current_gen = 0
