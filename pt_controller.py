@@ -2,7 +2,6 @@ import numpy as np, os
 import mod_hyper as mod, sys, math
 from random import randint
 from scipy.special import expit
-import tensorflow as tf
 from copy import deepcopy
 from matplotlib import pyplot as plt
 plt.switch_backend('Qt4Agg')
@@ -51,13 +50,20 @@ class SSNE_param:
         self.crossover_prob = 0.1
         self.mutation_prob = 0.9
         self.weight_magnitude_limit = 10000000
-        #self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
+        self.extinction_prob = 0.004 #Probability of extinction event
+        self.extinction_magnituide = 0.5 #Probabilty of extinction for each genome, given an extinction event
+        self.mut_distribution = 3 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
 
 class Parameters:
     def __init__(self):
             self.population_size = 100
-            self.load_seed = True #Loads a seed population from the save_foldername
-                                              # IF FALSE: Runs Backpropagation, saves it and uses that
+            self.load_seed = False #Loads a seed population from the save_foldername
+                                  # IF FALSE: Runs Backpropagation, saves it and uses that
+            # Determine the nerual archiecture
+            self.arch_type = 1  # 1 FF
+                                # 2 GRUMB
+            self. output_activation = None
+
             #Controller choices
             self.bprop_max_gens = 1000
             self.target_sensor = 11 #Turbine speed the sensor to control
@@ -77,17 +83,10 @@ class Parameters:
             self.ssne_param = SSNE_param()
             self.total_gens = 100000
             self.num_evals = 10 #Number of independent evaluations before getting a fitness score
-            #Determine the nerual archiecture
-            self.arch_type = 3 #1 GRU
-                               #2 GRU-MB
-                               #3 TF_FEEDFORWARD
 
-            if self.arch_type == 1: self.arch_type = 'GRU'
-            elif self.arch_type ==2: self.arch_type = 'GRU-MB'
-            elif self.arch_type == 3: self.arch_type = 'TF_Feedforward'
-            else: sys.exit('Invalid choice of neural architecture')
-
-            self.save_foldername = 'R_Controller/'
+            if self.arch_type == 1: self.arch_type = 'FF'
+            elif self.arch_type == 2: self.arch_type = 'GRU-MB'
+            self.save_foldername = 'R_Reconfigurable_Controller/'
 
 class Fast_Simulator(): #TF Simulator individual (One complete simulator genome)
     def __init__(self):
@@ -101,101 +100,63 @@ class Fast_Simulator(): #TF Simulator individual (One complete simulator genome)
     def from_tf(self, tf_sess):
         self.W = tf_sess.run(tf.trainable_variables())
 
-class Fast_Controller(): #TF Simulator individual (One complete simulator genome)
-    def __init__(self):
-        self.W = None
-
-    def predict(self, input):
-        # Feedforward operation
-        h_1 = expit(np.dot(input, self.W[0]) + self.W[1])
-        return np.dot(h_1, self.W[2]) + self.W[3]
-
-    def from_tf(self, tf_sess):
-        self.W = tf_sess.run(tf.trainable_variables())
-
-class Task_Controller: #Simulator Task
+class Task_Controller: #Reconfigurable Control Task
     def __init__(self, parameters):
         self.parameters = parameters; self.ssne_param = self.parameters.ssne_param
         self.num_input = self.ssne_param.num_input; self.num_hidden = self.ssne_param.num_hnodes; self.num_output = self.ssne_param.num_output
 
         self.train_data, self.valid_data = self.data_preprocess() #Get simulator data
-        self.ssne = mod.FAST_SSNE(parameters) #nitialize SSNE engine
+        self.ssne = mod.Fast_SSNE(parameters) #Initialize SSNE engine
 
-        # Simulator save folder for checkpoints
+        # Save folder for checkpoints
         self.marker = 'TF_ANN'
         self.save_foldername = self.parameters.save_foldername
         if not os.path.exists(self.save_foldername):
             os.makedirs(self.save_foldername)
 
-        #####CREATE SIMULATOR GRAPH
-        #Placeholder for input and target
-        self.input = tf.placeholder("float", [None, self.num_input])
-        self.target = tf.placeholder("float", [None, self.num_output])
-
-        # Call trainable variables (neural weights)
-        self.w_h1 = tf.Variable(tf.random_uniform([self.num_input, self.num_hidden], -1, 1))
-        self.w_b1 = tf.Variable(tf.random_uniform([1, self.num_hidden], -1, 1))
-        self.w_h2 = tf.Variable(tf.random_uniform([self.num_hidden, self.num_output], -1, 1))
-        self.w_b2 = tf.Variable(tf.random_uniform([1, self.num_output], -1, 1))
-
-        # Feedforward operation
-        self.h_1 = tf.nn.sigmoid(tf.matmul(self.input, self.w_h1) + self.w_b1)
-        self.net_out = tf.matmul(self.h_1, self.w_h2) + self.w_b2
-        # self.net_out = tf.nn.sigmoid(self.net_out)
-
-        # Define loss function and backpropagation (optimizer)
-        self.cost = tf.losses.absolute_difference(self.target, self.net_out)
-        self.bprop = tf.train.AdamOptimizer(0.05).minimize(self.cost)
-        #bprop = tf.train.GradientDescentOptimizer(0.09).minimize(self.cost)
-
-        #Open session
-        self.sess = tf.Session()
-        self.saver = tf.train.Saver()
-        self.sess.run(tf.global_variables_initializer())
-
         #Load simulator
-        self.simulator = mod.unpickle('R_Controller/Champion_Simulator')
+        self.simulator = mod.unpickle(self.save_foldername + 'Champion_Simulator')
         #mod.simulator_results(self.simulator)
 
-        #####CREATE POPULATION
+
+        #####Create Reconfigurable controller population
         self.pop = []
         for i in range(self.parameters.population_size):
-            self.pop.append(Fast_Controller())
+            # Choose architecture
+            if self.parameters.arch_type == "GRU-MB":
+                self.pop.append(mod.PT_GRUMB(self.num_input, self.num_hidden, self.num_output,
+                                             output_activation=self.parameters.output_activation))
+            elif self.parameters.arch_type == "FF":
+                self.pop.append(mod.PT_FF(self.num_input, self.num_hidden, self.num_output,
+                                          output_activation=self.parameters.output_activation))
+            else:
+                sys.exit('Error: Invalid architecture choice')
 
-        ###Init population
+
+        ###Initialize Controller Population
         if self.parameters.load_seed: #Load seed population
-            self.saver.restore(self.sess, self.save_foldername + 'bprop_controller')
+            self.pop[0] = mod.unpickle('R_Controller/seed_controller') #Load PT_GRUMB object
         else: #Run Backprop
             self.run_bprop()
-
-        self.pop[0].from_tf(self.sess) #Convert TF model into Fast_NET for population instance 1
-        #Init population by randomly perturbing the first one
-        for individual in self.pop[1:]:
-            individual.W = deepcopy(self.pop[0].W) #Copy pop 0 genome
-            for w in individual.W:
-                mut = np.reshape(np.random.normal(0, 2, w.size), (w.shape[0], w.shape[-1]))
-                w += mut
+        self.pop[0].to_fast_net()  # transcribe neurosphere to its Fast_Net
 
     def save(self, individual, filename ):
         mod.pickle_object(individual, filename)
-        #return individual.saver.save(individual.sess, self.save_foldername + filename)
-
-    def load(self, individual, filename ):
-        return individual.saver.restore(individual.sess, self.save_foldername + filename)
 
     def predict(self, individual, input): #Runs the individual net and computes and output by feedforwarding
         return individual.predict(input)
 
+    #TODO BackProp
     def run_bprop(self):
         train_x = self.train_data[0:-1,0:-2]
         sensor_target = self.train_data[1:,self.parameters.target_sensor:self.parameters.target_sensor+1]
         train_x = np.concatenate((train_x, sensor_target), axis=1) #Input training data
         train_y = self.train_data[0:-1,-2:] #Target Controller Output
 
-        for gen in range(self.parameters.bprop_max_gens):
-            self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
-            print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
-        self.saver.save(self.sess, self.save_foldername + 'bprop_controller') #Save individual
+        #for gen in range(self.parameters.bprop_max_gens):
+            #self.sess.run(self.bprop, feed_dict={self.input: train_x, self.target: train_y})
+            #print self.sess.run(self.cost, feed_dict={self.input: train_x, self.target: train_y})
+        #self.saver.save(self.sess, self.save_foldername + 'bprop_controller') #Save individual
 
     def plot_controller(self, individual, data_setpoints=False):
         setpoints = self.get_setpoints()
@@ -231,6 +192,7 @@ class Task_Controller: #Simulator Task
 
     def compute_fitness(self, individual, setpoints, start_controller_input, start_sim_input): #Controller fitness
         weakness = 0.0
+        individual.fast_net.reset()
 
         control_input = np.copy(start_controller_input) #Input to the controller
         sim_input = np.copy(start_sim_input) #Input to the simulator
@@ -252,7 +214,7 @@ class Task_Controller: #Simulator Task
             #
 
             #RUN THE CONTROLLER TO GET CONTROL OUTPUT
-            control_out = individual.predict(control_input)
+            control_out = individual.fast_net.predict(control_input)
             #
             # # Add actuator noise (controls)
             # if self.parameters.actuator_noise != 0:
@@ -280,7 +242,6 @@ class Task_Controller: #Simulator Task
             for i in range(simulator_out.shape[-1]):
                 sim_input[0][i] = simulator_out[0][i]
                 control_input[0][i] = simulator_out[0][i]
-
 
         return -weakness
 
@@ -316,8 +277,8 @@ class Task_Controller: #Simulator Task
             valid_score += self.compute_fitness(self.pop[champion_index], setpoints, start_controller_input, start_sim_input)/(1.0*parameters.num_evals)
 
 
-        #Save population and HOF
-        if gen % 1 == 0:
+        #Save population and Champion
+        if gen % 50 == 0:
             for index, individual in enumerate(self.pop): #Save population
                 self.save(individual, self.save_foldername + 'Controller_' + str(index))
             self.save(self.pop[champion_index], self.save_foldername + 'Champion_Controller') #Save champion
@@ -370,7 +331,7 @@ class Task_Controller: #Simulator Task
 if __name__ == "__main__":
     parameters = Parameters()  # Create the Parameters class
     tracker = Tracker(parameters)  # Initiate tracker
-    print 'Running Controller Training ', parameters.arch_type
+    print 'Running Reconfigurable Controller Training ', parameters.arch_type
 
     control_task = Task_Controller(parameters)
     for gen in range(1, parameters.total_gens):
